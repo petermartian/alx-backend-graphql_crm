@@ -2,13 +2,37 @@ from graphql import GraphQLError
 import decimal
 import graphene
 from graphene_django import DjangoObjectType
+from graphene_django.filter import DjangoFilterConnectionField
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
-from django.core.paginator import Paginator, EmptyPage
 from django.db.models import Sum
+from .models import Customer, Product, Order
+from .filters import CustomerFilter, ProductFilter, OrderFilter
 
-from crm.models import Customer, Product, Order
+# =========================
+# GraphQL Types
+# =========================
+class CustomerType(DjangoObjectType):
+    class Meta:
+        model = Customer
+        fields = ("id", "name", "email", "phone", "created_at")
+        filterset_class = CustomerFilter
+        interfaces = (graphene.relay.Node,)
+
+class ProductType(DjangoObjectType):
+    class Meta:
+        model = Product
+        fields = ("id", "name", "price", "stock", "created_at")
+        filterset_class = ProductFilter
+        interfaces = (graphene.relay.Node,)
+
+class OrderType(DjangoObjectType):
+    class Meta:
+        model = Order
+        fields = ("id", "customer", "products", "total_amount", "order_date")
+        filterset_class = OrderFilter
+        interfaces = (graphene.relay.Node,)
 
 # =========================
 # Helper Functions
@@ -18,62 +42,64 @@ def flatten_validation_errors(validation_error):
     return "; ".join([f"{k}: {', '.join(v)}" for k, v in validation_error.message_dict.items()])
 
 # =========================
-# GraphQL Types
+# Input Types for Filters
 # =========================
-class CustomerType(DjangoObjectType):
-    class Meta:
-        model = Customer
-        fields = ("id", "name", "email", "phone")
+class CustomerFilterInput(graphene.InputObjectType):
+    name_icontains = graphene.String()
+    email_icontains = graphene.String()
+    created_at_gte = graphene.DateTime()
+    created_at_lte = graphene.DateTime()
+    phone_pattern = graphene.String()
 
-class ProductType(DjangoObjectType):
-    class Meta:
-        model = Product
-        fields = ("id", "name", "price", "stock")
+class ProductFilterInput(graphene.InputObjectType):
+    name_icontains = graphene.String()
+    price_gte = graphene.Decimal()
+    price_lte = graphene.Decimal()
+    stock_gte = graphene.Int()
+    stock_lte = graphene.Int()
+    low_stock = graphene.Boolean()
 
-class OrderType(DjangoObjectType):
-    class Meta:
-        model = Order
-        fields = ("id", "customer", "products", "total_amount", "order_date")
+class OrderFilterInput(graphene.InputObjectType):
+    total_amount_gte = graphene.Decimal()
+    total_amount_lte = graphene.Decimal()
+    order_date_gte = graphene.DateTime()
+    order_date_lte = graphene.DateTime()
+    customer_name = graphene.String()
+    product_name = graphene.String()
+    product_id = graphene.ID()
 
 # =========================
 # Queries
 # =========================
 class Query(graphene.ObjectType):
     hello = graphene.String(default_value="Hello, GraphQL!")
-    customers = graphene.List(CustomerType, page=graphene.Int(default_value=1), page_size=graphene.Int(default_value=10))
-    products = graphene.List(ProductType, first=graphene.Int(), skip=graphene.Int())
-    orders = graphene.List(OrderType, page=graphene.Int(default_value=1), page_size=graphene.Int(default_value=10))
+    all_customers = DjangoFilterConnectionField(CustomerType, filterset_class=CustomerFilter, order_by=graphene.String())
+    all_products = DjangoFilterConnectionField(ProductType, filterset_class=ProductFilter, order_by=graphene.String())
+    all_orders = DjangoFilterConnectionField(OrderType, filterset_class=OrderFilter, order_by=graphene.String())
 
-    def resolve_customers(self, info, page, page_size):
-        customers = Customer.objects.all()
-        paginator = Paginator(customers, page_size)
-        try:
-            return paginator.page(page).object_list
-        except EmptyPage:
-            return []
+    def resolve_all_customers(self, info, **kwargs):
+        queryset = Customer.objects.all()
+        order_by = kwargs.get('order_by')
+        if order_by:
+            queryset = queryset.order_by(order_by)
+        return queryset
 
-    def resolve_products(self, info, first=None, skip=None):
-        query = Product.objects.all()
-        if skip is not None and skip < 0:
-            raise GraphQLError("Skip cannot be negative")
-        if first is not None and first <= 0:
-            raise GraphQLError("First must be a positive integer")
-        if skip:
-            query = query[skip:]
-        if first:
-            query = query[:first]
-        return query
+    def resolve_all_products(self, info, **kwargs):
+        queryset = Product.objects.all()
+        order_by = kwargs.get('order_by')
+        if order_by:
+            queryset = queryset.order_by(order_by)
+        return queryset
 
-    def resolve_orders(self, info, page, page_size):
-        orders = Order.objects.select_related("customer").prefetch_related("products").all()
-        paginator = Paginator(orders, page_size)
-        try:
-            return paginator.page(page).object_list
-        except EmptyPage:
-            return []
+    def resolve_all_orders(self, info, **kwargs):
+        queryset = Order.objects.select_related("customer").prefetch_related("products").all()
+        order_by = kwargs.get('order_by')
+        if order_by:
+            queryset = queryset.order_by(order_by)
+        return queryset
 
 # =========================
-# Mutations
+# Mutations (Retained from Previous Schema)
 # =========================
 class CreateCustomerInput(graphene.InputObjectType):
     name = graphene.String(required=True)
@@ -215,7 +241,7 @@ class CreateOrder(graphene.Mutation):
         return CreateOrder(order=order)
 
 # =========================
-# Root Schema
+# Root Mutation
 # =========================
 class Mutation(graphene.ObjectType):
     create_customer = CreateCustomer.Field()
@@ -223,4 +249,7 @@ class Mutation(graphene.ObjectType):
     create_product = CreateProduct.Field()
     create_order = CreateOrder.Field()
 
+# =========================
+# Root Schema
+# =========================
 schema = graphene.Schema(query=Query, mutation=Mutation)
