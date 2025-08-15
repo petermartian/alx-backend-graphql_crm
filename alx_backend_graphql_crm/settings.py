@@ -43,8 +43,9 @@ INSTALLED_APPS = [
     "crm",
 ]
 
+# settings.py
 GRAPHENE = {
-    "SCHEMA": "alx_backend_graphql_crm.schema.schema",  # module.path.to.schema variable
+    "SCHEMA": "graphql_crm.schema.schema",
 }
 
 
