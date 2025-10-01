@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "django_filters",
     "crm",
     'django_crontab',
+    'django_celery_beat',
 ]
 
 # settings.py
@@ -137,3 +138,32 @@ CRONJOBS = [
     # Runs the heartbeat log every 5 minutes
     ('*/5 * * * *', 'crm.cron.log_crm_heartbeat'),
 ]
+
+# ==============================================================================
+# CELERY SETTINGS
+# ==============================================================================
+from celery.schedules import crontab
+
+# Celery Broker Configuration
+# This tells Celery to use your local Redis instance as the broker.
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+
+# Celery Beat (Scheduler) Configuration
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+CELERY_BEAT_SCHEDULE = {
+    # A name for your scheduled task
+    'generate-weekly-crm-report': {
+        # The path to the task function
+        'task': 'crm.tasks.generate_crm_report',
+        # The schedule (runs every Monday at 6:00 AM)
+        'schedule': crontab(day_of_week='mon', hour=6, minute=0),
+    },
+}
+
+# Other Celery settings
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
