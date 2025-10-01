@@ -1,41 +1,35 @@
 from datetime import datetime
-import requests
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
+from requests.exceptions import RequestException
 
+# This is the heartbeat function from Task 2
 def log_crm_heartbeat():
     """
     Logs a heartbeat message to a file to confirm the CRM is alive.
-    Optionally pings the GraphQL endpoint.
+    Optionally pings the GraphQL endpoint using the gql library.
     """
     log_file = "/tmp/crm_heartbeat_log.txt"
     timestamp = datetime.now().strftime("%d/%m/%Y-%H:%M:%S")
     message = f"{timestamp} CRM is alive"
 
-    # Optional: Verify GraphQL endpoint is responsive
+    # Optional: Verify GraphQL endpoint is responsive using gql
     try:
-        response = requests.post(
-            "http://localhost:8000/graphql",
-            json={'query': '{ hello }'},
-            timeout=5 # Add a timeout
-        )
-        if response.status_code == 200 and 'data' in response.json():
-            message += " (GraphQL endpoint OK)"
-        else:
-            message += f" (GraphQL endpoint check failed with status: {response.status_code})"
-    except requests.exceptions.RequestException:
+        transport = RequestsHTTPTransport(url="http://localhost:8000/graphql", verify=True, retries=3)
+        client = Client(transport=transport, fetch_schema_from_transport=False)
+        query = gql('{ hello }')
+        client.execute(query)
+        message += " (GraphQL endpoint OK)"
+    except RequestException:
         message += " (GraphQL endpoint is unreachable)"
+    except Exception:
+        message += " (GraphQL endpoint check failed)"
 
     # Append the message to the log file
     with open(log_file, "a") as f:
         f.write(message + "\n")
 
-
-# crm/cron.py
-
-from datetime import datetime
-import requests
-
-# ... (keep the log_crm_heartbeat function from Task 2)
-
+# This is the stock update function from Task 3
 def update_low_stock():
     """
     Executes the UpdateLowStockProducts GraphQL mutation and logs the result.
@@ -57,23 +51,20 @@ def update_low_stock():
     """
 
     try:
-        response = requests.post("http://localhost:8000/graphql", json={'query': mutation_query}, timeout=10)
-        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
-        data = response.json()
+        transport = RequestsHTTPTransport(url="http://localhost:8000/graphql", verify=True, retries=3)
+        client = Client(transport=transport, fetch_schema_from_transport=False)
+        query = gql(mutation_query)
+        data = client.execute(query)
 
         with open(log_file, "a") as f:
             f.write(f"--- Stock Update Log [{timestamp}] ---\n")
-            if data.get('errors'):
-                f.write(f"An error occurred: {data['errors']}\n")
-                return
-
-            result = data['data']['updateLowStockProducts']
+            result = data['updateLowStockProducts']
             f.write(f"Status: {result['message']}\n")
-            if result['updatedProducts']:
+            if result.get('updatedProducts'):
                 for product in result['updatedProducts']:
                     f.write(f"  - Restocked '{product['name']}' to new stock level: {product['stock']}\n")
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         with open(log_file, "a") as f:
             f.write(f"--- ERROR Log [{timestamp}] ---\n")
             f.write(f"Failed to execute GraphQL mutation: {e}\n")
