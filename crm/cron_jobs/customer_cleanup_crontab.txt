@@ -1,0 +1,1 @@
+0 2 * * 0 cd /path/to/your/project/alx-backend-graphql_crm && source venv/bin/activate && ./crm/cron_jobs/clean_inactive_customers.sh

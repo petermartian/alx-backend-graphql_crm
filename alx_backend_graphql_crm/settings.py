@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "graphene_django",
     "django_filters",
     "crm",
+    'django_crontab',
 ]
 
 # settings.py
@@ -130,3 +131,9 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Django-crontab configuration
+CRONJOBS = [
+    # Runs the heartbeat log every 5 minutes
+    ('*/5 * * * *', 'crm.cron.log_crm_heartbeat'),
+]

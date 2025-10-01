@@ -253,3 +253,51 @@ class Mutation(graphene.ObjectType):
 # Root Schema
 # =========================
 schema = graphene.Schema(query=Query, mutation=Mutation)
+
+# crm/schema.py
+import graphene
+from graphene_django import DjangoObjectType
+from .models import Customer, Product, Order
+
+# ... (Your existing ProductType, OrderType, CustomerType, and Query classes)
+
+class UpdateLowStockProducts(graphene.Mutation):
+    """
+    Mutation to find products with stock < 10 and increase their stock by 10.
+    """
+    class Arguments:
+        # No arguments needed as the logic is predefined
+        pass
+
+    # Output fields
+    updated_products = graphene.List(ProductType)
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @staticmethod
+    def mutate(root, info):
+        # Find products with low stock
+        low_stock_products = Product.objects.filter(stock__lt=10)
+        
+        if not low_stock_products.exists():
+            return UpdateLowStockProducts(updated_products=[], success=True, message="No low stock products found.")
+
+        updated_list = []
+        for product in low_stock_products:
+            product.stock += 10  # Simulate restocking
+            product.save()
+            updated_list.append(product)
+
+        return UpdateLowStockProducts(
+            updated_products=updated_list,
+            success=True,
+            message=f"Successfully restocked {len(updated_list)} products."
+        )
+
+# Add the new mutation to your main Mutation class
+class Mutation(graphene.ObjectType):
+    # ... (any other mutations you have)
+    update_low_stock_products = UpdateLowStockProducts.Field()
+
+# Make sure your schema is defined with the Query and Mutation
+schema = graphene.Schema(query=Query, mutation=Mutation)
