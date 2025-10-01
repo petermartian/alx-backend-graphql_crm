@@ -9,6 +9,8 @@ from django.utils import timezone
 from django.db.models import Sum
 from .models import Customer, Product, Order
 from .filters import CustomerFilter, ProductFilter, OrderFilter
+from django.db.models import Sum, Count
+import decimal
 
 # =========================
 # GraphQL Types
@@ -252,3 +254,44 @@ class Mutation(graphene.ObjectType):
 # Root Schema
 # =========================
 schema = graphene.Schema(query=Query, mutation=Mutation)
+
+# crm/schema.py
+# ... import statements ...
+
+
+# ... (Keep all your existing Type and Mutation classes) ...
+
+# =========================
+# Queries
+# =========================
+class Query(graphene.ObjectType):
+    # --- Fields from your first Query class ---
+    hello = graphene.String(default_value="Hello, GraphQL!")
+    all_customers = DjangoFilterConnectionField(CustomerType, filterset_class=CustomerFilter)
+    all_products = DjangoFilterConnectionField(ProductType, filterset_class=ProductFilter)
+    all_orders = DjangoFilterConnectionField(OrderType, filterset_class=OrderFilter)
+
+    # --- Fields from your second Query class (for the report) ---
+    total_customer_count = graphene.Int()
+    total_order_count = graphene.Int()
+    total_revenue = graphene.Decimal()
+
+    # --- Resolvers for all fields ---
+    def resolve_all_customers(self, info, **kwargs):
+        return Customer.objects.all()
+
+    def resolve_all_products(self, info, **kwargs):
+        return Product.objects.all()
+
+    def resolve_all_orders(self, info, **kwargs):
+        return Order.objects.select_related("customer").prefetch_related("products").all()
+
+    def resolve_total_customer_count(self, info):
+        return Customer.objects.count()
+
+    def resolve_total_order_count(self, info):
+        return Order.objects.count()
+
+    def resolve_total_revenue(self, info):
+        revenue = Order.objects.aggregate(total_revenue=Sum('total_amount'))['total_revenue']
+        return revenue or decimal.Decimal('0.00')
