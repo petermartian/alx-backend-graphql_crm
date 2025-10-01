@@ -42,33 +42,6 @@ def flatten_validation_errors(validation_error):
     return "; ".join([f"{k}: {', '.join(v)}" for k, v in validation_error.message_dict.items()])
 
 # =========================
-# Input Types for Filters
-# =========================
-class CustomerFilterInput(graphene.InputObjectType):
-    name_icontains = graphene.String()
-    email_icontains = graphene.String()
-    created_at_gte = graphene.DateTime()
-    created_at_lte = graphene.DateTime()
-    phone_pattern = graphene.String()
-
-class ProductFilterInput(graphene.InputObjectType):
-    name_icontains = graphene.String()
-    price_gte = graphene.Decimal()
-    price_lte = graphene.Decimal()
-    stock_gte = graphene.Int()
-    stock_lte = graphene.Int()
-    low_stock = graphene.Boolean()
-
-class OrderFilterInput(graphene.InputObjectType):
-    total_amount_gte = graphene.Decimal()
-    total_amount_lte = graphene.Decimal()
-    order_date_gte = graphene.DateTime()
-    order_date_lte = graphene.DateTime()
-    customer_name = graphene.String()
-    product_name = graphene.String()
-    product_id = graphene.ID()
-
-# =========================
 # Queries
 # =========================
 class Query(graphene.ObjectType):
@@ -99,7 +72,7 @@ class Query(graphene.ObjectType):
         return queryset
 
 # =========================
-# Mutations (Retained from Previous Schema)
+# Mutations
 # =========================
 class CreateCustomerInput(graphene.InputObjectType):
     name = graphene.String(required=True)
@@ -159,10 +132,7 @@ class BulkCreateCustomers(graphene.Mutation):
                     cust.full_clean()
                     cust.save()
                     created.append(cust)
-                except ValidationError as e:
-                    transaction.savepoint_rollback(sid)
-                    errors.append(f"[{idx}] {flatten_validation_errors(e)}")
-                except GraphQLError as e:
+                except (ValidationError, GraphQLError) as e:
                     transaction.savepoint_rollback(sid)
                     errors.append(f"[{idx}] {str(e)}")
                 except Exception as e:
@@ -184,17 +154,12 @@ class CreateProduct(graphene.Mutation):
 
     @staticmethod
     def mutate(root, info, input):
-        try:
-            price = decimal.Decimal(str(input.price))
-        except (ValueError, TypeError):
-            raise GraphQLError("Price must be a valid decimal number")
-
-        if price <= 0:
+        if input.price <= 0:
             raise GraphQLError("Price must be greater than zero")
         if input.stock < 0:
             raise GraphQLError("Stock cannot be negative")
 
-        product = Product(name=input.name, price=price, stock=input.stock)
+        product = Product(name=input.name, price=input.price, stock=input.stock)
         try:
             product.full_clean()
             product.save()
@@ -223,9 +188,8 @@ class CreateOrder(graphene.Mutation):
         if not input.product_ids:
             raise GraphQLError("At least one product must be selected")
 
-        id_list = list(set(int(i) for i in input.product_ids))
-        products = Product.objects.filter(pk__in=id_list)
-        if products.count() != len(id_list):
+        products = Product.objects.filter(pk__in=input.product_ids)
+        if products.count() != len(input.product_ids):
             raise GraphQLError("One or more product IDs are invalid")
 
         total = products.aggregate(total_amount=Sum('price'))['total_amount'] or decimal.Decimal("0.00")
@@ -234,40 +198,19 @@ class CreateOrder(graphene.Mutation):
             order = Order.objects.create(
                 customer=customer,
                 order_date=input.order_date or timezone.now(),
-                total_amount=total.quantize(decimal.Decimal("0.01"))
+                total_amount=total
             )
             order.products.add(*products)
 
         return CreateOrder(order=order)
 
-# =========================
-# Root Mutation
-# =========================
-class Mutation(graphene.ObjectType):
-    create_customer = CreateCustomer.Field()
-    bulk_create_customers = BulkCreateCustomers.Field()
-    create_product = CreateProduct.Field()
-    create_order = CreateOrder.Field()
-
-# =========================
-# Root Schema
-# =========================
-schema = graphene.Schema(query=Query, mutation=Mutation)
-
-# crm/schema.py
-import graphene
-from graphene_django import DjangoObjectType
-from .models import Customer, Product, Order
-
-# ... (Your existing ProductType, OrderType, CustomerType, and Query classes)
-
+# This is the new mutation for updating low-stock products
 class UpdateLowStockProducts(graphene.Mutation):
     """
-    Mutation to find products with stock < 10 and increase their stock by 10.
+    Finds products with stock < 10 and increases their stock by 10.
     """
     class Arguments:
-        # No arguments needed as the logic is predefined
-        pass
+        pass # No arguments needed
 
     # Output fields
     updated_products = graphene.List(ProductType)
@@ -275,8 +218,8 @@ class UpdateLowStockProducts(graphene.Mutation):
     message = graphene.String()
 
     @staticmethod
+    @transaction.atomic
     def mutate(root, info):
-        # Find products with low stock
         low_stock_products = Product.objects.filter(stock__lt=10)
         
         if not low_stock_products.exists():
@@ -294,10 +237,18 @@ class UpdateLowStockProducts(graphene.Mutation):
             message=f"Successfully restocked {len(updated_list)} products."
         )
 
-# Add the new mutation to your main Mutation class
+# =========================
+# Root Mutation
+# =========================
 class Mutation(graphene.ObjectType):
-    # ... (any other mutations you have)
+    create_customer = CreateCustomer.Field()
+    bulk_create_customers = BulkCreateCustomers.Field()
+    create_product = CreateProduct.Field()
+    create_order = CreateOrder.Field()
+    # Add the new mutation field to the single, unified Mutation class
     update_low_stock_products = UpdateLowStockProducts.Field()
 
-# Make sure your schema is defined with the Query and Mutation
+# =========================
+# Root Schema
+# =========================
 schema = graphene.Schema(query=Query, mutation=Mutation)
